@@ -23,7 +23,7 @@
 1. Create a dedicated **Git Worktree** named `wt-<SHA1>`.
 2. Map the template variables (e.g., `{BEAD_ID}`).
 3. Monitor the child process PID.
-4. Use git2 for all readonly git access, use git shell commands for git worktree operations.
+4. Use git2 for all readonly git access, use git2 for read-write access on top of a clean commit, such as to store a new entry in the beads graph. Use git shell commands for git worktree operations.
 5. Look for default agent name in refinery.toml (options section). Use when MCP command does not specific agent.
 6. Look for default planner agent name in refinery.toml (options section). Monitor any commits to the planner repo or explict tool calls to build_plan.
 6. Prefer the unsafe version with that name if the ALLOW_UNSAFE_AGENTS=true value is set.
