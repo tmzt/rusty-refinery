@@ -1,0 +1,11 @@
+[package]
+name = "crk-plan"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+librefinery = { path = "../librefinery" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+serde_json = "1"

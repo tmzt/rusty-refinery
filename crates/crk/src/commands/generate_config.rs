@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::gen_config::{self, Editor, GenerateOptions};
+use librefinery::gen_config::{self, Editor, GenerateOptions};
 
 pub fn run(
     editor: Editor,

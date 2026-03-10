@@ -1,10 +1,10 @@
 use rmcp::ServiceExt;
 use tracing::info;
 
-use crate::config::RefineryConfig;
-use crate::events::EventStream;
-use crate::proxy;
-use crate::tools::RefineryServer;
+use librefinery::config::RefineryConfig;
+use librefinery::events::EventStream;
+use librefinery::proxy;
+use librefinery::tools::RefineryServer;
 
 pub async fn run(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
     let config = RefineryConfig::load()?;

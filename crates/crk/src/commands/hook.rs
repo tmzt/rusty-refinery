@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use tracing::error;
 
-use crate::config::RefineryConfig;
-use crate::hooks;
+use librefinery::config::RefineryConfig;
+use librefinery::hooks;
 
 pub async fn install(planning_path: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let config = RefineryConfig::load()?;

@@ -1,6 +1,6 @@
-use crate::config::RefineryConfig;
-use crate::events::EventStream;
-use crate::tools::RefineryServer;
+use librefinery::config::RefineryConfig;
+use librefinery::events::EventStream;
+use librefinery::tools::RefineryServer;
 
 async fn make_server() -> Result<RefineryServer, Box<dyn std::error::Error>> {
     let config = RefineryConfig::load()?;

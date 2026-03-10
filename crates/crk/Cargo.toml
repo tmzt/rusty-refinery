@@ -1,0 +1,18 @@
+[package]
+name = "crk"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crk"
+path = "src/main.rs"
+
+[dependencies]
+librefinery = { path = "../librefinery" }
+crk-plan = { path = "../crk-plan" }
+rmcp = { version = "1.1", features = ["server", "transport-io"] }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

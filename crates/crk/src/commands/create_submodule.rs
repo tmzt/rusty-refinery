@@ -1,7 +1,7 @@
 use tracing::info;
 
-use crate::config::RefineryConfig;
-use crate::git_ops;
+use librefinery::config::RefineryConfig;
+use librefinery::git_ops;
 
 /// List all discovered first-level submodules.
 pub async fn list() -> Result<(), Box<dyn std::error::Error>> {

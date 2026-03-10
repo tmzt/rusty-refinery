@@ -1,21 +1,12 @@
-mod bead;
 mod commands;
-mod config;
-mod events;
-mod gen_config;
-mod git_ops;
-mod hooks;
-mod proxy;
-mod reaper;
-mod tools;
 
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::gen_config::Editor;
-use crate::proxy::DEFAULT_SOCKET_PATH;
+use librefinery::gen_config::Editor;
+use librefinery::proxy::DEFAULT_SOCKET_PATH;
 
 #[derive(Parser)]
 #[command(name = "crk", about = "Beads Refinery Orchestrator — MCP server for PRD-to-agent lifecycle")]
@@ -38,14 +29,11 @@ enum Command {
         #[arg(default_value = DEFAULT_SOCKET_PATH)]
         socket: String,
     },
-    /// Invoke the planning agent directly with stdio pass-through
+    /// Manage plans (create, run planner). Defaults to agent if no subcommand given.
+    #[command(subcommand_required = false)]
     Plan {
-        /// Template name (defaults to default_planner from refinery.toml)
-        #[arg(long)]
-        template: Option<String>,
-        /// Additional arguments passed to the planner command
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        extra_args: Vec<String>,
+        #[command(subcommand)]
+        action: Option<crk_plan::PlanAction>,
     },
     /// Scan planning directory and sync all discovered PRD files
     Scan {
@@ -182,9 +170,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             init_tracing();
             commands::proxy::run(&socket).await?;
         }
-        Some(Command::Plan { template, extra_args }) => {
+        Some(Command::Plan { action }) => {
             init_tracing();
-            commands::plan::run(template, extra_args).await?;
+            crk_plan::run(action).await?;
         }
         Some(Command::Scan { planning_path }) => {
             init_tracing();

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tracing::info;
 
-use crate::config::{self, RefineryConfig};
+use librefinery::config::{self, RefineryConfig};
 
 pub async fn run(
     template: Option<String>,
