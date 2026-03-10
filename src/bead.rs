@@ -22,7 +22,7 @@ impl fmt::Display for BeadStatus {
 }
 
 impl BeadStatus {
-    pub fn from_str_status(s: &str) -> Self {
+    pub fn _from_str_status(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "RUNNING" => BeadStatus::Running,
             "COMPLETE" => BeadStatus::Complete,
@@ -74,7 +74,7 @@ impl BeadRegistry {
         self.beads.values().collect()
     }
 
-    pub fn list_by_status(&self, status: BeadStatus) -> Vec<&Bead> {
+    pub fn _list_by_status(&self, status: BeadStatus) -> Vec<&Bead> {
         self.by_status
             .get(&status)
             .map(|ids| {

@@ -10,17 +10,17 @@ pub enum GitError {
     #[error("worktree command failed: {0}")]
     Worktree(String),
     #[error("path not found in tree: {0}")]
-    PathNotFound(String),
+    _PathNotFound(String),
 }
 
 pub struct GitOps {
-    repo: git2::Repository,
+    _repo: git2::Repository,
 }
 
 impl GitOps {
-    pub fn open(repo_path: &Path) -> Result<Self, GitError> {
+    pub fn _open(repo_path: &Path) -> Result<Self, GitError> {
         let repo = git2::Repository::open(repo_path)?;
-        Ok(GitOps { repo })
+        Ok(GitOps { _repo: repo })
     }
 
     /// Compute the SHA-1 hash of a file as a git blob (equivalent to `git hash-object`).
@@ -31,36 +31,36 @@ impl GitOps {
     }
 
     /// Read a file from the repository at a given revision.
-    pub fn read_file(&self, path: &str, rev: &str) -> Result<Vec<u8>, GitError> {
-        let obj = self.repo.revparse_single(rev)?;
+    pub fn _read_file(&self, path: &str, rev: &str) -> Result<Vec<u8>, GitError> {
+        let obj = self._repo.revparse_single(rev)?;
         let commit = obj.peel_to_commit()?;
         let tree = commit.tree()?;
         let entry = tree
             .get_path(Path::new(path))
-            .map_err(|_| GitError::PathNotFound(path.to_string()))?;
-        let blob = self.repo.find_blob(entry.id())?;
+            .map_err(|_| GitError::_PathNotFound(path.to_string()))?;
+        let blob = self._repo.find_blob(entry.id())?;
         Ok(blob.content().to_vec())
     }
 
     /// Write a bead entry as a new commit on a detached tree.
-    pub fn write_bead_entry(&self, bead_id: &str, data: &[u8]) -> Result<(), GitError> {
-        let head = self.repo.head()?;
+    pub fn _write_bead_entry(&self, bead_id: &str, data: &[u8]) -> Result<(), GitError> {
+        let head = self._repo.head()?;
         let parent_commit = head.peel_to_commit()?;
         let parent_tree = parent_commit.tree()?;
 
         // Create the blob
-        let blob_oid = self.repo.blob(data)?;
+        let blob_oid = self._repo.blob(data)?;
 
         // Build the new tree with the bead entry
-        let mut tree_builder = self.repo.treebuilder(Some(&parent_tree))?;
+        let mut tree_builder = self._repo.treebuilder(Some(&parent_tree))?;
         let bead_path = format!(".beads/{bead_id}");
         tree_builder.insert(&bead_path, blob_oid, 0o100644)?;
         let new_tree_oid = tree_builder.write()?;
-        let new_tree = self.repo.find_tree(new_tree_oid)?;
+        let new_tree = self._repo.find_tree(new_tree_oid)?;
 
         // Create the commit
-        let sig = self.repo.signature()?;
-        self.repo.commit(
+        let sig = self._repo.signature()?;
+        self._repo.commit(
             Some("HEAD"),
             &sig,
             &sig,
@@ -101,7 +101,7 @@ impl GitOps {
     }
 
     /// Remove a git worktree using shell commands.
-    pub async fn remove_worktree(repo_path: &Path, name: &str) -> Result<(), GitError> {
+    pub async fn _remove_worktree(repo_path: &Path, name: &str) -> Result<(), GitError> {
         let worktree_name = format!("wt-{name}");
         let output = tokio::process::Command::new("git")
             .args(["worktree", "remove", "--force", &worktree_name])

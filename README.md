@@ -19,16 +19,22 @@ rusty-refinery
 Daemon mode — long-lived process listening on a Unix domain socket:
 
 ```
-rusty-refinery --daemon
+rusty-refinery daemon
 ```
 
 Proxy mode — connects to the daemon and bridges to stdio:
 
 ```
-rusty-refinery --proxy
+rusty-refinery proxy
 ```
 
-See [Daemon and Proxy Modes](#daemon-and-proxy-modes) for details.
+Generate editor config — output MCP config JSON for your editor:
+
+```
+rusty-refinery generate-config <EDITOR> [OPTIONS]
+```
+
+See [Daemon and Proxy Modes](#daemon-and-proxy-modes) and [Generating Editor Configs](#generating-editor-configs) for details.
 
 ## Environment Variables
 
@@ -307,8 +313,8 @@ rusty-refinery supports three execution modes, similar to Docker's client/daemon
 | Mode | Command | Description |
 |---|---|---|
 | stdio | `rusty-refinery` | MCP server on stdin/stdout (default) |
-| daemon | `rusty-refinery --daemon [SOCKET]` | Listen on a Unix domain socket |
-| proxy | `rusty-refinery --proxy [SOCKET]` | Connect to daemon UDS, bridge to stdio |
+| daemon | `rusty-refinery daemon [SOCKET]` | Listen on a Unix domain socket |
+| proxy | `rusty-refinery proxy [SOCKET]` | Connect to daemon UDS, bridge to stdio |
 
 The default socket path is `/tmp/rusty-refinery.sock`.
 
@@ -319,13 +325,13 @@ The default socket path is `/tmp/rusty-refinery.sock`.
 ```bash
 PLANNING_PATH=/home/user/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
-  rusty-refinery --daemon &
+  rusty-refinery daemon &
 ```
 
 With a custom socket path:
 
 ```bash
-rusty-refinery --daemon /run/user/1000/refinery.sock &
+rusty-refinery daemon /run/user/1000/refinery.sock &
 ```
 
 With YOLO mode:
@@ -334,7 +340,7 @@ With YOLO mode:
 PLANNING_PATH=/home/user/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
 ALLOW_UNSAFE_AGENTS=true \
-  rusty-refinery --daemon &
+  rusty-refinery daemon &
 ```
 
 Or as a systemd user service (`~/.config/systemd/user/rusty-refinery.service`):
@@ -345,7 +351,7 @@ Description=Rusty Refinery MCP Server
 After=redis.service
 
 [Service]
-ExecStart=/home/user/project/submodules/rusty-refinery/target/release/rusty-refinery --daemon
+ExecStart=/home/user/project/submodules/rusty-refinery/target/release/rusty-refinery daemon
 Environment=PLANNING_PATH=/home/user/project/submodules/planning
 Environment=REDIS_URL=redis://127.0.0.1/
 Restart=on-failure
@@ -359,18 +365,37 @@ WantedBy=default.target
 The proxy mode connects to the daemon's UDS and bridges it to stdio, making it transparent to any MCP client:
 
 ```bash
-rusty-refinery --proxy
+rusty-refinery proxy
 ```
 
 The client sees a normal stdio MCP server. The proxy forwards everything to the long-lived daemon. When the proxy exits, the daemon and its agents keep running.
 
-## Zed Editor Integration
+## Generating Editor Configs
 
-rusty-refinery can be used as an MCP server from [Zed](https://zed.dev/) via its context server support. Zed launches the **proxy**, which connects to the already-running **daemon**.
+The `generate-config` subcommand outputs MCP configuration JSON for your editor. Supported editors: `vscode`, `zed`, `cursor`, `claude`, `windsurf`, `antigravity`, `zen`.
 
-### Local Zed Configuration
+```bash
+rusty-refinery generate-config <EDITOR> [OPTIONS]
+```
 
-Start the daemon first, then configure Zed (`~/.config/zed/settings.json` or project `.zed/settings.json`):
+Options:
+
+| Flag | Description |
+|---|---|
+| `--proxy` | Use proxy mode (recommended with daemon) |
+| `--socket <PATH>` | Custom socket path for proxy mode |
+| `--binary <PATH>` | Override binary path in output |
+| `--planning-path <PATH>` | Set `PLANNING_PATH` in env |
+| `--redis-url <URL>` | Set `REDIS_URL` in env |
+| `--allow-unsafe` | Set `ALLOW_UNSAFE_AGENTS=true` in env |
+
+### Examples
+
+Generate a Zed config that connects via proxy to the daemon:
+
+```bash
+rusty-refinery generate-config zed --proxy
+```
 
 ```json
 {
@@ -378,31 +403,102 @@ Start the daemon first, then configure Zed (`~/.config/zed/settings.json` or pro
     "rusty-refinery": {
       "command": {
         "path": "/path/to/rusty-refinery",
-        "args": ["--proxy"]
-      }
+        "args": ["proxy"],
+        "env": {}
+      },
+      "settings": {}
     }
   }
 }
 ```
 
-With a custom socket path:
+Generate a VS Code config with environment and custom socket:
+
+```bash
+rusty-refinery generate-config vscode --proxy \
+  --planning-path /home/user/project/planning \
+  --redis-url redis://10.0.0.5/ \
+  --socket /run/user/1000/refinery.sock
+```
 
 ```json
 {
-  "context_servers": {
+  "servers": {
     "rusty-refinery": {
-      "command": {
-        "path": "/path/to/rusty-refinery",
-        "args": ["--proxy", "/run/user/1000/refinery.sock"]
+      "command": "/path/to/rusty-refinery",
+      "args": ["proxy", "/run/user/1000/refinery.sock"],
+      "env": {
+        "PLANNING_PATH": "/home/user/project/planning",
+        "REDIS_URL": "redis://10.0.0.5/"
       }
     }
   }
 }
 ```
+
+Generate a Claude Desktop config (direct stdio, no daemon):
+
+```bash
+rusty-refinery generate-config claude
+```
+
+```json
+{
+  "mcpServers": {
+    "rusty-refinery": {
+      "command": "/path/to/rusty-refinery"
+    }
+  }
+}
+```
+
+Generate a Cursor config with YOLO mode:
+
+```bash
+rusty-refinery generate-config cursor --proxy --allow-unsafe
+```
+
+The output includes a comment showing where to save the file. Redirect to create the config directly:
+
+```bash
+rusty-refinery generate-config vscode --proxy > .vscode/mcp.json
+```
+
+## Editor Integration
+
+Start the daemon first, then configure your editor to launch the proxy. The proxy is lightweight and stateless — it's safe for the editor to start and stop it at will.
+
+### Zed
+
+```bash
+rusty-refinery generate-config zed --proxy > .zed/settings.json
+```
+
+Or merge manually into your existing settings. See [Zed MCP docs](https://zed.dev/docs/assistant/context-servers) for details.
+
+### VS Code
+
+```bash
+mkdir -p .vscode && rusty-refinery generate-config vscode --proxy > .vscode/mcp.json
+```
+
+### Cursor
+
+```bash
+mkdir -p .cursor && rusty-refinery generate-config cursor --proxy > .cursor/mcp.json
+```
+
+### Claude Desktop
+
+```bash
+rusty-refinery generate-config claude > ~/.config/claude/claude_desktop_config.json
+```
+
+Note: Claude Desktop manages the server lifecycle itself. Use direct stdio mode (no `--proxy`) if the desktop app is always running, or use `--proxy` if you want agents to persist independently.
 
 ### Remote Setup (SSH)
 
-When Zed connects to a remote machine via SSH, it runs MCP commands on the remote host. The daemon must already be running there.
+For editors with SSH remote development (Zed, VS Code, Cursor), the daemon runs on the remote host and the editor launches the proxy there.
 
 Prepare the remote host:
 
@@ -419,33 +515,25 @@ redis-server --daemonize yes
 # Start the daemon
 PLANNING_PATH=/home/ubuntu/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
-  /home/ubuntu/project/submodules/rusty-refinery/target/release/rusty-refinery --daemon &
+  ./target/release/rusty-refinery daemon &
 ```
 
-Then in your project's `.zed/settings.json`:
+Then generate the config using the remote binary path:
 
-```json
-{
-  "context_servers": {
-    "rusty-refinery": {
-      "command": {
-        "path": "/home/ubuntu/project/submodules/rusty-refinery/target/release/rusty-refinery",
-        "args": ["--proxy"]
-      }
-    }
-  }
-}
+```bash
+rusty-refinery generate-config zed --proxy \
+  --binary /home/ubuntu/project/submodules/rusty-refinery/target/release/rusty-refinery
 ```
 
-All paths must be absolute on the remote filesystem. Zed launches the proxy on the remote host over SSH; the proxy connects to the daemon's socket locally.
+All paths in the generated config must be absolute on the remote filesystem. The editor launches the proxy over SSH; the proxy connects to the daemon's socket locally.
 
 ### Verifying the Connection
 
-Once configured, restart Zed or reload the project. The refinery's tools (`sync_prd`, `launch_agent`, `build_plan`, `list_beads`, `kill_agent`) should appear in the assistant panel's available tools. If they don't:
+Once configured, restart your editor or reload the project. The refinery's tools (`sync_prd`, `launch_agent`, `build_plan`, `list_beads`, `kill_agent`) should appear in the available tools. If they don't:
 
-1. Verify the daemon is running: `pgrep -f 'rusty-refinery --daemon'`
-2. Test the proxy: `echo '{}' | rusty-refinery --proxy`
-3. Check Zed's log output (`View > Toggle Log`) for MCP connection errors
+1. Verify the daemon is running: `pgrep -f 'rusty-refinery daemon'`
+2. Test the proxy: `echo '{}' | rusty-refinery proxy`
+3. Check your editor's log output for MCP connection errors
 4. Verify Redis is reachable from the host where the daemon runs
 
 ## License
