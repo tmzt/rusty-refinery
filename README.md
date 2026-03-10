@@ -58,46 +58,39 @@ default_planner = "planner"   # template used by build_plan
 
 ### Templates
 
-Each template defines a command, arguments, environment variables, and an optional unsafe variant.
+Each template defines a command and optional arguments/env. The agent type is auto-detected from the command name (`claude`, `gemini`, `codex`) or set explicitly with `agent_type`.
 
-Template variables `{BEAD_ID}` and `{WORKTREE_PATH}` are substituted at launch time in both `args` and `env` values.
+Template variables `{BEAD_ID}`, `{WORKTREE_PATH}`, and any system environment variable can be used in `args` and `env` values via `{VAR}` interpolation.
 
 ```toml
 [templates.coder]
 command = "claude"
-args = ["--dangerously-skip-permissions"]
+args = ["-p", "Implement the task described in the PRD."]
 env = { "BEAD_ID" = "{BEAD_ID}" }
-unsafe_variant = "coder_unsafe"
-
-[templates.planner]
-command = "claude"
-args = ["--dangerously-skip-permissions", "-p", "Review and create implementation plan"]
-env = { "BEAD_ID" = "{BEAD_ID}", "WORKTREE" = "{WORKTREE_PATH}" }
 ```
 
-### Example: Standard Configuration
+No need to add `--dangerously-skip-permissions`, `--sandbox=none`, or `--full-auto` — these are injected automatically when `ALLOW_UNSAFE_AGENTS=true`.
 
-A minimal safe configuration with a coder and planner:
+### Convention Over Configuration
+
+rusty-refinery auto-configures agents based on the command name:
+
+| Command | Agent Type | Unsafe Flag | MCP Config | Prompt Flag |
+|---|---|---|---|---|
+| `claude` | Claude | `--dangerously-skip-permissions` | `--mcp-config <tmpfile>` | `-p` |
+| `gemini` | Gemini | `--sandbox=none` | `--mcp <command>` | `--prompt` |
+| `codex` | Codex | `--full-auto` | `--mcp-config <tmpfile>` | positional |
+
+Override detection with `agent_type`:
 
 ```toml
-[options]
-default_agent = "coder"
-default_planner = "planner"
-
-[templates.coder]
-command = "claude"
-args = ["--dangerously-skip-permissions"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-
-[templates.planner]
-command = "claude"
-args = ["--dangerously-skip-permissions", "-p", "Review and create implementation plan"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
+[templates.my_agent]
+command = "/usr/local/bin/my-claude-wrapper"
+agent_type = "claude"
+args = ["-p", "Do the thing."]
 ```
 
-### Example: Unsafe / YOLO Configuration
-
-This configuration includes unsafe agent variants that bypass additional safety checks. These variants are **only used when `ALLOW_UNSAFE_AGENTS=true` is set in the environment**. Without it, the standard variant is always selected even if `unsafe_variant` is defined.
+### Example: Minimal Configuration
 
 ```toml
 [options]
@@ -106,97 +99,53 @@ default_planner = "planner"
 
 [templates.coder]
 command = "claude"
-args = ["--dangerously-skip-permissions"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-unsafe_variant = "coder_unsafe"
-
-[templates.coder_unsafe]
-command = "claude"
-args = ["--dangerously-skip-permissions", "--unsafe"]
+args = ["-p", "Implement the task described in the PRD."]
 env = { "BEAD_ID" = "{BEAD_ID}" }
 
 [templates.planner]
 command = "claude"
-args = ["--dangerously-skip-permissions", "-p", "Review and create implementation plan"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-unsafe_variant = "planner_unsafe"
-
-[templates.planner_unsafe]
-command = "claude"
-args = ["--dangerously-skip-permissions", "--unsafe", "-p", "Review and create implementation plan"]
+args = ["-p", "Review and create implementation plan"]
 env = { "BEAD_ID" = "{BEAD_ID}" }
 ```
 
-To enable unsafe variants:
+### Example: Mixed Agents
+
+```toml
+[options]
+default_agent = "coder"
+default_planner = "planner"
+
+[templates.coder]
+command = "claude"
+args = ["-p", "Implement the task described in the PRD."]
+env = { "BEAD_ID" = "{BEAD_ID}" }
+
+[templates.planner]
+command = "gemini"
+args = ["--prompt", "Review and create implementation plan"]
+env = { "BEAD_ID" = "{BEAD_ID}" }
+
+[templates.codex_coder]
+command = "codex"
+args = ["Implement the task described in the PRD."]
+env = { "BEAD_ID" = "{BEAD_ID}" }
+```
+
+### Unsafe / YOLO Mode
+
+Set `ALLOW_UNSAFE_AGENTS=true` and the refinery automatically adds the correct insecure flag for each agent type. No need for separate unsafe templates.
 
 ```bash
 export ALLOW_UNSAFE_AGENTS=true
-cargo run
+rusty-refinery daemon &
 ```
 
-When `ALLOW_UNSAFE_AGENTS` is unset or any value other than `true`/`1`, the refinery will always resolve to the safe template regardless of `unsafe_variant` being configured. If an MCP client requests an unsafe template directly while the environment gate is off, a "Security Policy Violation" is the expected behavior.
+### Auto MCP Server Injection
 
-## Planning Agent Configuration
+When using `rusty-refinery plan`, the refinery automatically injects itself as an MCP server into the agent. This means the planner can call refinery tools (`sync_prd`, `list_beads`, etc.) during planning. The injection method is agent-specific:
 
-The `build_plan` tool spawns whichever template is set as `default_planner`. Below are configurations for two popular CLI agents.
-
-### Claude Code as Planner
-
-```toml
-[options]
-default_planner = "planner"
-
-[templates.planner]
-command = "claude"
-args = [
-    "--dangerously-skip-permissions",
-    "-p",
-    "You are an architectural planner. Read the PRD at the PLANNING_PATH, analyze the codebase in this worktree, and produce a step-by-step implementation plan in PLAN.md. Do not write code."
-]
-env = { "BEAD_ID" = "{BEAD_ID}", "PLANNING_PATH" = "{WORKTREE_PATH}" }
-```
-
-Claude Code uses `-p` to pass an initial prompt non-interactively. The agent runs in the worktree directory and has full file access to analyze the codebase.
-
-### Gemini CLI as Planner
-
-```toml
-[options]
-default_planner = "planner"
-
-[templates.planner]
-command = "gemini"
-args = [
-    "--prompt",
-    "You are an architectural planner. Read the PRD at the PLANNING_PATH, analyze the codebase in this worktree, and produce a step-by-step implementation plan in PLAN.md. Do not write code."
-]
-env = { "BEAD_ID" = "{BEAD_ID}", "PLANNING_PATH" = "{WORKTREE_PATH}" }
-```
-
-Gemini CLI uses `--prompt` for non-interactive execution. Ensure `gemini` is installed and authenticated (`gemini auth login`) before use.
-
-### Mixed Agent Configuration
-
-You can use different agents for different roles. For example, Gemini for planning and Claude for coding:
-
-```toml
-[options]
-default_agent = "coder"
-default_planner = "planner"
-
-[templates.coder]
-command = "claude"
-args = ["--dangerously-skip-permissions"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-
-[templates.planner]
-command = "gemini"
-args = [
-    "--prompt",
-    "Read the PRD and produce a detailed implementation plan in PLAN.md."
-]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-```
+- **Claude/Codex**: writes a temp JSON file and passes `--mcp-config <path>`
+- **Gemini**: passes `--mcp "rusty-refinery proxy"`
 
 ## Interacting with the Planning Agent
 

@@ -34,25 +34,22 @@ impl Reaper {
     ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
         let worktree_str = worktree.to_string_lossy().to_string();
 
-        // Substitute template variables in args
+        // Build context env for interpolation
+        let mut ctx = template.env.clone();
+        ctx.insert("BEAD_ID".to_string(), bead_id.to_string());
+        ctx.insert("WORKTREE_PATH".to_string(), worktree_str);
+
         let args: Vec<String> = template
             .args
             .iter()
-            .map(|a| {
-                a.replace("{BEAD_ID}", bead_id)
-                    .replace("{WORKTREE_PATH}", &worktree_str)
-            })
+            .map(|a| crate::config::interpolate_env(a, &ctx))
             .collect();
 
         let mut cmd = tokio::process::Command::new(&template.command);
         cmd.args(&args).current_dir(worktree);
 
-        // Set template environment variables with substitution
         for (key, val) in &template.env {
-            let val = val
-                .replace("{BEAD_ID}", bead_id)
-                .replace("{WORKTREE_PATH}", &worktree_str);
-            cmd.env(key, val);
+            cmd.env(key, crate::config::interpolate_env(val, &ctx));
         }
 
         let child = cmd.spawn()?;

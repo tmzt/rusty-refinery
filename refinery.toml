@@ -4,16 +4,20 @@ default_planner = "planner"
 
 [templates.coder]
 command = "claude"
-args = ["--dangerously-skip-permissions"]
-env = { "BEAD_ID" = "{BEAD_ID}" }
-unsafe_variant = "coder_unsafe"
-
-[templates.coder_unsafe]
-command = "claude"
-args = ["--dangerously-skip-permissions", "--unsafe"]
+args = ["-p", "Implement the task described in the PRD."]
 env = { "BEAD_ID" = "{BEAD_ID}" }
 
 [templates.planner]
 command = "claude"
-args = ["--dangerously-skip-permissions", "-p", "Review and create implementation plan"]
+args = ["-p", "Review and create implementation plan"]
+env = { "BEAD_ID" = "{BEAD_ID}" }
+
+[templates.gemini_planner]
+command = "gemini"
+args = ["--prompt", "Review and create implementation plan"]
+env = { "BEAD_ID" = "{BEAD_ID}" }
+
+[templates.codex_coder]
+command = "codex"
+args = ["Implement the task described in the PRD."]
 env = { "BEAD_ID" = "{BEAD_ID}" }
