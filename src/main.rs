@@ -1,26 +1,24 @@
 mod bead;
+mod commands;
 mod config;
 mod events;
 mod gen_config;
 mod git_ops;
+mod hooks;
 mod proxy;
 mod reaper;
 mod tools;
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
-use rmcp::ServiceExt;
-use tracing::info;
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
-use crate::config::RefineryConfig;
-use crate::events::EventStream;
-use crate::gen_config::{Editor, GenerateOptions};
+use crate::gen_config::Editor;
 use crate::proxy::DEFAULT_SOCKET_PATH;
-use crate::tools::RefineryServer;
 
 #[derive(Parser)]
-#[command(name = "rusty-refinery", about = "Beads Refinery Orchestrator — MCP server for PRD-to-agent lifecycle")]
+#[command(name = "crk", about = "Beads Refinery Orchestrator — MCP server for PRD-to-agent lifecycle")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -48,6 +46,33 @@ enum Command {
         /// Additional arguments passed to the planner command
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra_args: Vec<String>,
+    },
+    /// Scan planning directory and sync all discovered PRD files
+    Scan {
+        /// Path to the planning repo (overrides PLANNING_PATH)
+        #[arg(long)]
+        planning_path: Option<String>,
+    },
+    /// Manage git hooks for automatic PRD detection
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+    /// Manage submodules (create, list)
+    Submodule {
+        #[command(subcommand)]
+        action: SubmoduleAction,
+    },
+    /// Invoke MCP tools directly from the CLI
+    Tools {
+        #[command(subcommand)]
+        action: ToolAction,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
     /// Generate MCP configuration for an editor
     GenerateConfig {
@@ -81,11 +106,143 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum HookAction {
+    /// Install a post-commit hook in the planning repo
+    Install {
+        /// Path to the planning repo (overrides PLANNING_PATH)
+        #[arg(long)]
+        planning_path: Option<String>,
+    },
+    /// Uninstall the post-commit hook from the planning repo
+    Uninstall {
+        /// Path to the planning repo (overrides PLANNING_PATH)
+        #[arg(long)]
+        planning_path: Option<String>,
+    },
+    /// Handle a post-commit event (called by the git hook)
+    PostCommit,
+}
+
+#[derive(Subcommand)]
+enum SubmoduleAction {
+    /// Create a new submodule with local repo, remote, and planning directory
+    Create {
+        /// Name of the new submodule
+        name: String,
+    },
+    /// List discovered submodules
+    #[command(alias = "ls")]
+    List,
+}
+
+#[derive(Subcommand)]
+enum ToolAction {
+    /// Hash a PRD file and register a new bead
+    SyncPrd {
+        /// Path to the PRD file to hash and register
+        #[arg(long)]
+        prd_path: String,
+    },
+    /// Launch an agent from a template in an isolated worktree
+    LaunchAgent {
+        /// Bead ID (SHA-1 hash) of the PRD
+        #[arg(long)]
+        bead_id: String,
+        /// Template name from refinery.toml (uses default_agent if omitted)
+        #[arg(long)]
+        template: Option<String>,
+    },
+    /// Trigger the planner agent for a bead
+    BuildPlan {
+        /// Bead ID (SHA-1 hash) of the PRD
+        #[arg(long)]
+        bead_id: String,
+    },
+    /// List all beads and their current status
+    ListBeads,
+    /// Stop a running agent process for a bead
+    KillAgent {
+        /// Bead ID (SHA-1 hash) of the agent to stop
+        #[arg(long)]
+        bead_id: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Command::Daemon { socket }) => {
+            init_tracing();
+            commands::daemon::run(&socket).await?;
+        }
+        Some(Command::Proxy { socket }) => {
+            init_tracing();
+            commands::proxy::run(&socket).await?;
+        }
+        Some(Command::Plan { template, extra_args }) => {
+            init_tracing();
+            commands::plan::run(template, extra_args).await?;
+        }
+        Some(Command::Scan { planning_path }) => {
+            init_tracing();
+            commands::scan::run(planning_path).await?;
+        }
+        Some(Command::Hook { action }) => {
+            match action {
+                HookAction::Install { planning_path } => {
+                    commands::hook::install(planning_path).await?;
+                }
+                HookAction::Uninstall { planning_path } => {
+                    commands::hook::uninstall(planning_path).await?;
+                }
+                HookAction::PostCommit => {
+                    init_tracing();
+                    commands::hook::post_commit().await?;
+                }
+            }
+        }
+        Some(Command::Tools { action }) => {
+            init_tracing();
+            match action {
+                ToolAction::SyncPrd { prd_path } => {
+                    commands::tools::sync_prd(prd_path).await?;
+                }
+                ToolAction::LaunchAgent { bead_id, template } => {
+                    commands::tools::launch_agent(bead_id, template).await?;
+                }
+                ToolAction::BuildPlan { bead_id } => {
+                    commands::tools::build_plan(bead_id).await?;
+                }
+                ToolAction::ListBeads => {
+                    commands::tools::list_beads().await?;
+                }
+                ToolAction::KillAgent { bead_id } => {
+                    commands::tools::kill_agent(bead_id).await?;
+                }
+            }
+        }
+        Some(Command::Completions { shell }) => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "crk",
+                &mut std::io::stdout(),
+            );
+        }
+        Some(Command::Submodule { action }) => {
+            match action {
+                SubmoduleAction::Create { name } => {
+                    init_tracing();
+                    commands::create_submodule::run(&name).await?;
+                }
+                SubmoduleAction::List => {
+                    commands::create_submodule::list().await?;
+                }
+            }
+        }
         Some(Command::GenerateConfig {
             editor,
             proxy,
@@ -97,140 +254,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             save,
             replace_file,
         }) => {
-            let binary_path = binary.unwrap_or_else(|| {
-                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("rusty-refinery"))
-            });
-            let output = gen_config::generate(&GenerateOptions {
-                editor: editor.clone(),
-                binary_path,
-                proxy,
-                socket_path: socket,
-                planning_path,
-                redis_url,
-                allow_unsafe,
-            });
-            if save {
-                match gen_config::save(&editor, &output, replace_file) {
-                    Ok(path) => eprintln!("Wrote config to {}", path.display()),
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                eprintln!("# Save to: {}", editor.config_path_hint());
-                println!("{output}");
-            }
-            return Ok(());
-        }
-        Some(Command::Plan {
-            template,
-            extra_args,
-        }) => {
-            init_tracing();
-            let config = RefineryConfig::load()?;
-
-            let planner_name = template
-                .or_else(|| config.options.default_planner.clone())
-                .unwrap_or_else(|| "planner".to_string());
-
-            let tmpl = config
-                .resolve_template(&planner_name)
-                .ok_or_else(|| format!("template not found: {planner_name}"))?
-                .clone();
-
-            let planning_path = &config.options.planning_path;
-
-            // Interpolate env vars in template args
-            let mut args: Vec<String> = tmpl
-                .args
-                .iter()
-                .map(|a| config::interpolate_env(a, &tmpl.env))
-                .collect();
-
-            // Auto-add unsafe flags when allowed
-            if config.options.allow_unsafe_agents {
-                for flag in tmpl.agent_type.unsafe_args() {
-                    if !args.iter().any(|a| a == flag) {
-                        args.push(flag.to_string());
-                    }
-                }
-            }
-
-            // Auto-configure MCP server pointing back to rusty-refinery
-            let self_bin = std::env::current_exe()
-                .unwrap_or_else(|_| PathBuf::from("rusty-refinery"));
-            let self_bin_str = self_bin.to_string_lossy().to_string();
-            let (mcp_args, _mcp_tmp) =
-                tmpl.agent_type.mcp_args(&self_bin_str, &["proxy"]);
-            args.extend(mcp_args);
-
-            args.extend(extra_args);
-
-            info!(
-                template = %tmpl.name,
-                agent_type = ?tmpl.agent_type,
-                planning_path = %planning_path.display(),
-                "launching planner with stdio pass-through"
+            commands::generate_config::run(
+                editor, proxy, socket, binary, planning_path,
+                redis_url, allow_unsafe, save, replace_file,
             );
-
-            // Interpolate env vars in template env values
-            let env: std::collections::HashMap<String, String> = tmpl
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), config::interpolate_env(v, &tmpl.env)))
-                .collect();
-
-            let mut child = tokio::process::Command::new(&tmpl.command)
-                .args(&args)
-                .current_dir(planning_path)
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .envs(&env)
-                .spawn()?;
-
-            let status = child.wait().await?;
-            std::process::exit(status.code().unwrap_or(1));
-        }
-        Some(Command::Proxy { socket }) => {
-            init_tracing();
-            info!(socket_path = %socket, "proxy mode: connecting to daemon");
-            proxy::proxy(&socket).await?;
-        }
-        Some(Command::Daemon { socket }) => {
-            init_tracing();
-            let config = RefineryConfig::load()?;
-            info!("loaded configuration with {} templates", config.templates.len());
-
-            let events = EventStream::connect(&config.options.redis_url).await?;
-            info!("connected to Redis at {}", config.options.redis_url);
-
-            let server = RefineryServer::new(config, events);
-
-            proxy::listen(&socket, move |reader, writer| {
-                let server = server.clone();
-                async move {
-                    let service = server.serve((reader, writer)).await?;
-                    service.waiting().await?;
-                    Ok(())
-                }
-            })
-            .await?;
         }
         None => {
             init_tracing();
-            let config = RefineryConfig::load()?;
-            info!("loaded configuration with {} templates", config.templates.len());
-
-            let events = EventStream::connect(&config.options.redis_url).await?;
-            info!("connected to Redis at {}", config.options.redis_url);
-
-            let server = RefineryServer::new(config, events);
-
-            let service = server.serve(rmcp::transport::io::stdio()).await?;
-            info!("rusty-refinery MCP server running on stdio");
-            service.waiting().await?;
+            commands::stdio::run().await?;
         }
     }
 

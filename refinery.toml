@@ -1,6 +1,10 @@
 [options]
 default_agent = "coder"
 default_planner = "planner"
+repos_path = "./repos/submodules"
+submodules_path = "./submodules"
+github_account = "tmzt"
+# github_remote_name = "github"  # default
 
 [templates.coder]
 command = "claude"

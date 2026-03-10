@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "rusty-refinery"
+name = "crk"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,4 +20,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 tempfile = "3"

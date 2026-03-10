@@ -2,6 +2,8 @@
 
 An MCP server that orchestrates PRD-to-agent lifecycle: hashes PRD files, deduplicates via Redis, spawns agent processes in isolated git worktrees, and emits events to a Redis stream.
 
+The binary is called `crk`.
+
 ## Building
 
 ```
@@ -13,25 +15,55 @@ cargo build --release
 Stdio mode (default) — MCP server on stdin/stdout:
 
 ```
-rusty-refinery
+crk
 ```
 
 Daemon mode — long-lived process listening on a Unix domain socket:
 
 ```
-rusty-refinery daemon
+crk daemon
 ```
 
 Proxy mode — connects to the daemon and bridges to stdio:
 
 ```
-rusty-refinery proxy
+crk proxy
+```
+
+Scan planning directory for PRD files and sync to Redis:
+
+```
+crk scan
+```
+
+Manage submodules (create, list):
+
+```
+crk submodule create <NAME>
+crk submodule list
+```
+
+Invoke MCP tools directly from the CLI:
+
+```
+crk tools sync-prd --prd-path <PATH>
+crk tools list-beads
+crk tools launch-agent --bead-id <ID>
+crk tools build-plan --bead-id <ID>
+crk tools kill-agent --bead-id <ID>
 ```
 
 Generate editor config — output MCP config JSON for your editor:
 
 ```
-rusty-refinery generate-config <EDITOR> [OPTIONS]
+crk generate-config <EDITOR> [OPTIONS]
+```
+
+Generate shell completions:
+
+```
+crk completions bash > ~/.bash_completion.d/crk
+crk completions zsh > ~/.zfunc/_crk
 ```
 
 See [Daemon and Proxy Modes](#daemon-and-proxy-modes) and [Generating Editor Configs](#generating-editor-configs) for details.
@@ -46,15 +78,27 @@ See [Daemon and Proxy Modes](#daemon-and-proxy-modes) and [Generating Editor Con
 
 ## Configuration
 
-rusty-refinery reads `refinery.toml` from the working directory at startup.
+`crk` reads `refinery.toml` from the working directory at startup.
 
 ### Options
 
 ```toml
 [options]
-default_agent = "coder"       # template used when launch_agent omits template name
-default_planner = "planner"   # template used by build_plan
+default_agent = "coder"           # template used when launch_agent omits template name
+default_planner = "planner"       # template used by build_plan
+repos_path = "./repos/submodules" # where local repos are created (submodule create)
+submodules_path = "./submodules"  # where submodules are checked out
+github_account = "tmzt"           # GitHub user for remote URLs (optional)
+github_remote_name = "github"     # remote name for the GitHub remote (default: "github")
 ```
+
+The `github_account` field supports three formats:
+
+- **GitHub username**: `"tmzt"` — expands to `git@github.com:tmzt/{NAME}.git`
+- **SSH URL template**: `"git@gitlab.com:myorg/{NAME}.git"` — `{NAME}` is replaced with the submodule name
+- **HTTPS URL template**: `"https://gitlab.com/myorg/{NAME}.git"`
+
+If `github_account` is omitted, `submodule create` skips adding a remote.
 
 ### Templates
 
@@ -73,7 +117,7 @@ No need to add `--dangerously-skip-permissions`, `--sandbox=none`, or `--full-au
 
 ### Convention Over Configuration
 
-rusty-refinery auto-configures agents based on the command name:
+`crk` auto-configures agents based on the command name:
 
 | Command | Agent Type | Unsafe Flag | MCP Config | Prompt Flag |
 |---|---|---|---|---|
@@ -137,15 +181,15 @@ Set `ALLOW_UNSAFE_AGENTS=true` and the refinery automatically adds the correct i
 
 ```bash
 export ALLOW_UNSAFE_AGENTS=true
-rusty-refinery daemon &
+crk daemon &
 ```
 
 ### Auto MCP Server Injection
 
-When using `rusty-refinery plan`, the refinery automatically injects itself as an MCP server into the agent. This means the planner can call refinery tools (`sync_prd`, `list_beads`, etc.) during planning. The injection method is agent-specific:
+When using `crk plan`, the refinery automatically injects itself as an MCP server into the agent. This means the planner can call refinery tools (`sync_prd`, `list_beads`, etc.) during planning. The injection method is agent-specific:
 
 - **Claude/Codex**: writes a temp JSON file and passes `--mcp-config <path>`
-- **Gemini**: passes `--mcp "rusty-refinery proxy"`
+- **Gemini**: passes `--mcp "crk proxy"`
 
 ## Interacting with the Planning Agent
 
@@ -165,29 +209,26 @@ When using `rusty-refinery plan`, the refinery automatically injects itself as a
    }
    ```
 
+   Or from the CLI:
+
+   ```bash
+   crk tools sync-prd --prd-path ./submodules/planning/prds/feature-x.md
+   ```
+
    Response: `Bead registered: a1b2c3d4e5f6...`
 
 2. **Build a plan** for the bead:
 
-   ```json
-   {
-     "method": "tools/call",
-     "params": {
-       "name": "build_plan",
-       "arguments": { "bead_id": "a1b2c3d4e5f6..." }
-     }
-   }
+   ```bash
+   crk tools build-plan --bead-id a1b2c3d4e5f6...
    ```
 
    This creates a worktree `wt-<bead_id>-plan`, spawns the planner template inside it, and begins monitoring the process. The planner agent reads the PRD and writes its output (e.g. `PLAN.md`) into the worktree.
 
 3. **Check status** while the planner runs:
 
-   ```json
-   {
-     "method": "tools/call",
-     "params": { "name": "list_beads" }
-   }
+   ```bash
+   crk tools list-beads
    ```
 
    ```
@@ -198,28 +239,16 @@ When using `rusty-refinery plan`, the refinery automatically injects itself as a
 
 4. **Launch the coder** once the plan is ready:
 
-   ```json
-   {
-     "method": "tools/call",
-     "params": {
-       "name": "launch_agent",
-       "arguments": { "bead_id": "a1b2c3d4e5f6..." }
-     }
-   }
+   ```bash
+   crk tools launch-agent --bead-id a1b2c3d4e5f6...
    ```
 
    This creates a separate worktree `wt-<bead_id>` and spawns the default coder template.
 
 5. **Stop an agent** if needed:
 
-   ```json
-   {
-     "method": "tools/call",
-     "params": {
-       "name": "kill_agent",
-       "arguments": { "bead_id": "a1b2c3d4e5f6..." }
-     }
-   }
+   ```bash
+   crk tools kill-agent --bead-id a1b2c3d4e5f6...
    ```
 
 ### Monitoring via Redis
@@ -238,13 +267,79 @@ redis-cli XRANGE beads:events - +
 
 ## MCP Tools
 
-| Tool | Description |
-|---|---|
-| `sync_prd` | Hash a PRD file and register a new bead. Deduplicates against Redis — skips if already COMPLETE. |
-| `launch_agent` | Launch an agent from a template in an isolated git worktree. |
-| `build_plan` | Trigger the planner agent for a bead. |
-| `list_beads` | List all beads and their current status. |
-| `kill_agent` | Stop a running agent process for a bead. |
+| Tool | CLI Equivalent | Description |
+|---|---|---|
+| `sync_prd` | `crk tools sync-prd` | Hash a PRD file and register a new bead. Deduplicates against Redis — skips if already COMPLETE. |
+| `launch_agent` | `crk tools launch-agent` | Launch an agent from a template in an isolated git worktree. |
+| `build_plan` | `crk tools build-plan` | Trigger the planner agent for a bead. |
+| `list_beads` | `crk tools list-beads` | List all beads and their current status. |
+| `kill_agent` | `crk tools kill-agent` | Stop a running agent process for a bead. |
+
+## Git Hooks — Automatic PRD Detection
+
+`crk` can install a post-commit hook in the planning repo that automatically syncs changed PRD files whenever they are committed.
+
+### Installing the Hook
+
+```bash
+crk hook install
+```
+
+Or with a custom planning path:
+
+```bash
+crk hook install --planning-path /path/to/planning
+```
+
+This writes a `post-commit` hook in the planning repo's `.git/hooks/` directory. On each commit, the hook:
+
+1. Checks if `RUSTY_REFINERY_SKIP_HOOK=1` is set (to avoid double-triggering from agent commits)
+2. Runs `git diff-tree` to find changed files in `prds/*.md`
+3. Hashes each changed PRD and registers it as a new bead in Redis
+
+### Uninstalling the Hook
+
+```bash
+crk hook uninstall
+```
+
+Only removes hooks installed by `crk`. Pre-existing hooks are left untouched.
+
+### Agent Commit Safety
+
+When the refinery spawns an agent process, it automatically sets `RUSTY_REFINERY_SKIP_HOOK=1` in the agent's environment. This prevents the hook from re-syncing PRDs that the agent itself committed, avoiding infinite loops.
+
+## Submodule Management
+
+`crk` discovers first-level submodules from the parent repo's `.gitmodules` and maps PRD subdirectories to their checkout paths. This means a PRD at `prds/rusty-genius/feature.md` automatically targets the `rusty-genius` submodule — agents create worktrees in the right repo.
+
+### Creating Submodules
+
+```bash
+crk submodule create my-new-module
+```
+
+This:
+1. Creates a local git repo at `{repos_path}/my-new-module` with a `main` branch
+2. Adds a GitHub remote (if `github_account` is set in `refinery.toml`)
+3. Registers it as a submodule at `{submodules_path}/my-new-module`
+4. Creates a `prds/my-new-module/` directory in the planning repo
+
+### Listing Submodules
+
+```bash
+crk submodule list
+```
+
+Shows all first-level submodules with their checkout paths.
+
+### Scanning for PRDs
+
+```bash
+crk scan
+```
+
+Walks the planning directory's `prds/` tree, discovers all `.md` files organized by submodule subdirectory, and syncs each one to Redis.
 
 ## Event Sourcing
 
@@ -257,30 +352,30 @@ All lifecycle events are emitted to the Redis stream `beads:events` via XADD:
 
 ## Daemon and Proxy Modes
 
-rusty-refinery supports three execution modes, similar to Docker's client/daemon architecture:
+`crk` supports three execution modes, similar to Docker's client/daemon architecture:
 
 | Mode | Command | Description |
 |---|---|---|
-| stdio | `rusty-refinery` | MCP server on stdin/stdout (default) |
-| daemon | `rusty-refinery daemon [SOCKET]` | Listen on a Unix domain socket |
-| proxy | `rusty-refinery proxy [SOCKET]` | Connect to daemon UDS, bridge to stdio |
+| stdio | `crk` | MCP server on stdin/stdout (default) |
+| daemon | `crk daemon [SOCKET]` | Listen on a Unix domain socket |
+| proxy | `crk proxy [SOCKET]` | Connect to daemon UDS, bridge to stdio |
 
-The default socket path is `/tmp/rusty-refinery.sock`.
+The default socket path is `/tmp/crk.sock`.
 
-**Why not just stdio?** Agent subprocesses are designed to survive MCP disconnections. If an MCP client (like Zed or Claude Code) launches rusty-refinery directly, closing the client kills the refinery and all its child agents. The daemon/proxy split solves this — the daemon and its agents live independently, and proxy sessions can come and go.
+**Why not just stdio?** Agent subprocesses are designed to survive MCP disconnections. If an MCP client (like Zed or Claude Code) launches `crk` directly, closing the client kills the refinery and all its child agents. The daemon/proxy split solves this — the daemon and its agents live independently, and proxy sessions can come and go.
 
 ### Starting the Daemon
 
 ```bash
 PLANNING_PATH=/home/user/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
-  rusty-refinery daemon &
+  crk daemon &
 ```
 
 With a custom socket path:
 
 ```bash
-rusty-refinery daemon /run/user/1000/refinery.sock &
+crk daemon /run/user/1000/refinery.sock &
 ```
 
 With YOLO mode:
@@ -289,10 +384,10 @@ With YOLO mode:
 PLANNING_PATH=/home/user/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
 ALLOW_UNSAFE_AGENTS=true \
-  rusty-refinery daemon &
+  crk daemon &
 ```
 
-Or as a systemd user service (`~/.config/systemd/user/rusty-refinery.service`):
+Or as a systemd user service (`~/.config/systemd/user/crk.service`):
 
 ```ini
 [Unit]
@@ -300,7 +395,7 @@ Description=Rusty Refinery MCP Server
 After=redis.service
 
 [Service]
-ExecStart=/home/user/project/submodules/rusty-refinery/target/release/rusty-refinery daemon
+ExecStart=/home/user/project/submodules/rusty-refinery/target/release/crk daemon
 Environment=PLANNING_PATH=/home/user/project/submodules/planning
 Environment=REDIS_URL=redis://127.0.0.1/
 Restart=on-failure
@@ -314,7 +409,7 @@ WantedBy=default.target
 The proxy mode connects to the daemon's UDS and bridges it to stdio, making it transparent to any MCP client:
 
 ```bash
-rusty-refinery proxy
+crk proxy
 ```
 
 The client sees a normal stdio MCP server. The proxy forwards everything to the long-lived daemon. When the proxy exits, the daemon and its agents keep running.
@@ -324,7 +419,7 @@ The client sees a normal stdio MCP server. The proxy forwards everything to the 
 The `generate-config` subcommand outputs MCP configuration JSON for your editor. Supported editors: `vscode`, `zed`, `cursor`, `claude`, `windsurf`, `antigravity`, `zen`.
 
 ```bash
-rusty-refinery generate-config <EDITOR> [OPTIONS]
+crk generate-config <EDITOR> [OPTIONS]
 ```
 
 Options:
@@ -343,7 +438,7 @@ Options:
 Generate a Zed config that connects via proxy to the daemon:
 
 ```bash
-rusty-refinery generate-config zed --proxy
+crk generate-config zed --proxy
 ```
 
 ```json
@@ -351,7 +446,7 @@ rusty-refinery generate-config zed --proxy
   "context_servers": {
     "rusty-refinery": {
       "command": {
-        "path": "/path/to/rusty-refinery",
+        "path": "/path/to/crk",
         "args": ["proxy"],
         "env": {}
       },
@@ -364,7 +459,7 @@ rusty-refinery generate-config zed --proxy
 Generate a VS Code config with environment and custom socket:
 
 ```bash
-rusty-refinery generate-config vscode --proxy \
+crk generate-config vscode --proxy \
   --planning-path /home/user/project/planning \
   --redis-url redis://10.0.0.5/ \
   --socket /run/user/1000/refinery.sock
@@ -374,7 +469,7 @@ rusty-refinery generate-config vscode --proxy \
 {
   "servers": {
     "rusty-refinery": {
-      "command": "/path/to/rusty-refinery",
+      "command": "/path/to/crk",
       "args": ["proxy", "/run/user/1000/refinery.sock"],
       "env": {
         "PLANNING_PATH": "/home/user/project/planning",
@@ -388,14 +483,14 @@ rusty-refinery generate-config vscode --proxy \
 Generate a Claude Desktop config (direct stdio, no daemon):
 
 ```bash
-rusty-refinery generate-config claude
+crk generate-config claude
 ```
 
 ```json
 {
   "mcpServers": {
     "rusty-refinery": {
-      "command": "/path/to/rusty-refinery"
+      "command": "/path/to/crk"
     }
   }
 }
@@ -404,13 +499,13 @@ rusty-refinery generate-config claude
 Generate a Cursor config with YOLO mode:
 
 ```bash
-rusty-refinery generate-config cursor --proxy --allow-unsafe
+crk generate-config cursor --proxy --allow-unsafe
 ```
 
 The output includes a comment showing where to save the file. Redirect to create the config directly:
 
 ```bash
-rusty-refinery generate-config vscode --proxy > .vscode/mcp.json
+crk generate-config vscode --proxy > .vscode/mcp.json
 ```
 
 ## Editor Integration
@@ -420,7 +515,7 @@ Start the daemon first, then configure your editor to launch the proxy. The prox
 ### Zed
 
 ```bash
-rusty-refinery generate-config zed --proxy > .zed/settings.json
+crk generate-config zed --proxy > .zed/settings.json
 ```
 
 Or merge manually into your existing settings. See [Zed MCP docs](https://zed.dev/docs/assistant/context-servers) for details.
@@ -428,19 +523,19 @@ Or merge manually into your existing settings. See [Zed MCP docs](https://zed.de
 ### VS Code
 
 ```bash
-mkdir -p .vscode && rusty-refinery generate-config vscode --proxy > .vscode/mcp.json
+mkdir -p .vscode && crk generate-config vscode --proxy > .vscode/mcp.json
 ```
 
 ### Cursor
 
 ```bash
-mkdir -p .cursor && rusty-refinery generate-config cursor --proxy > .cursor/mcp.json
+mkdir -p .cursor && crk generate-config cursor --proxy > .cursor/mcp.json
 ```
 
 ### Claude Desktop
 
 ```bash
-rusty-refinery generate-config claude > ~/.config/claude/claude_desktop_config.json
+crk generate-config claude > ~/.config/claude/claude_desktop_config.json
 ```
 
 Note: Claude Desktop manages the server lifecycle itself. Use direct stdio mode (no `--proxy`) if the desktop app is always running, or use `--proxy` if you want agents to persist independently.
@@ -464,14 +559,14 @@ redis-server --daemonize yes
 # Start the daemon
 PLANNING_PATH=/home/ubuntu/project/submodules/planning \
 REDIS_URL=redis://127.0.0.1/ \
-  ./target/release/rusty-refinery daemon &
+  ./target/release/crk daemon &
 ```
 
 Then generate the config using the remote binary path:
 
 ```bash
-rusty-refinery generate-config zed --proxy \
-  --binary /home/ubuntu/project/submodules/rusty-refinery/target/release/rusty-refinery
+crk generate-config zed --proxy \
+  --binary /home/ubuntu/project/submodules/rusty-refinery/target/release/crk
 ```
 
 All paths in the generated config must be absolute on the remote filesystem. The editor launches the proxy over SSH; the proxy connects to the daemon's socket locally.
@@ -480,8 +575,8 @@ All paths in the generated config must be absolute on the remote filesystem. The
 
 Once configured, restart your editor or reload the project. The refinery's tools (`sync_prd`, `launch_agent`, `build_plan`, `list_beads`, `kill_agent`) should appear in the available tools. If they don't:
 
-1. Verify the daemon is running: `pgrep -f 'rusty-refinery daemon'`
-2. Test the proxy: `echo '{}' | rusty-refinery proxy`
+1. Verify the daemon is running: `pgrep -f 'crk daemon'`
+2. Test the proxy: `echo '{}' | crk proxy`
 3. Check your editor's log output for MCP connection errors
 4. Verify Redis is reachable from the host where the daemon runs
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -11,6 +12,97 @@ pub enum GitError {
     Worktree(String),
     #[error("path not found in tree: {0}")]
     _PathNotFound(String),
+}
+
+/// A first-level submodule in the parent repo.
+#[derive(Debug, Clone)]
+pub struct SubmoduleInfo {
+    /// The submodule name from .gitmodules (e.g., "rusty-genius")
+    pub name: String,
+    /// The checkout path relative to the repo root (e.g., "rusty-genius" or "backend/rusty-cog")
+    pub path: String,
+}
+
+/// Map of submodule name → SubmoduleInfo, discovered from .gitmodules.
+pub type SubmoduleMap = HashMap<String, SubmoduleInfo>;
+
+/// Find the parent repo root by walking up from `start` looking for a `.git` directory
+/// (not a .git file, which indicates a submodule).
+/// Falls back to walking up from cwd if `start` doesn't exist.
+pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    let abs = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(start)
+    };
+    // Try canonicalize, fall back to cwd if path doesn't exist
+    let mut dir = abs.canonicalize()
+        .or_else(|_| std::env::current_dir())
+        .ok()?;
+    loop {
+        let git_path = dir.join(".git");
+        if git_path.is_dir() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Discover first-level submodules by parsing `.gitmodules` in the given repo root.
+/// Does not recurse into nested submodules.
+pub fn discover_submodules(repo_root: &Path) -> Result<SubmoduleMap, GitError> {
+    let gitmodules_path = repo_root.join(".gitmodules");
+    if !gitmodules_path.exists() {
+        return Ok(HashMap::new());
+    }
+
+    let content = std::fs::read_to_string(&gitmodules_path)?;
+    let mut map = HashMap::new();
+    let mut current_name: Option<String> = None;
+    let mut current_path: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("[submodule \"") {
+            // Flush previous entry
+            if let (Some(name), Some(path)) = (current_name.take(), current_path.take()) {
+                map.insert(name.clone(), SubmoduleInfo { name, path });
+            }
+            current_name = rest.strip_suffix("\"]").map(|s| s.to_string());
+            current_path = None;
+        } else if let Some(rest) = trimmed.strip_prefix("path = ") {
+            current_path = Some(rest.to_string());
+        }
+    }
+    // Flush last entry
+    if let (Some(name), Some(path)) = (current_name.take(), current_path.take()) {
+        map.insert(name.clone(), SubmoduleInfo { name, path });
+    }
+
+    Ok(map)
+}
+
+/// Resolve which submodule a PRD targets based on its subdirectory within the planning tree.
+///
+/// Given a PRD path like `prds/rusty-genius/feature.md`, extracts `rusty-genius`
+/// and looks it up in the submodule map. Returns the submodule info and the
+/// absolute path to the submodule's checkout directory.
+pub fn resolve_target_submodule<'a>(
+    prd_rel_path: &str,
+    submodules: &'a SubmoduleMap,
+    repo_root: &Path,
+) -> Option<(&'a SubmoduleInfo, PathBuf)> {
+    // Strip leading "prds/" if present
+    let inner = prd_rel_path.strip_prefix("prds/").unwrap_or(prd_rel_path);
+
+    // The first path component is the submodule name
+    let submodule_name = inner.split('/').next()?;
+
+    let info = submodules.get(submodule_name)?;
+    let abs_path = repo_root.join(&info.path);
+    Some((info, abs_path))
 }
 
 pub struct GitOps {

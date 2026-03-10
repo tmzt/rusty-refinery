@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
 
+use crate::git_ops::SubmoduleMap;
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("failed to read refinery.toml: {0}")]
@@ -22,8 +24,37 @@ pub struct Options {
     pub default_agent: Option<String>,
     pub default_planner: Option<String>,
     pub planning_path: PathBuf,
+    pub repos_path: PathBuf,
+    pub submodules_path: PathBuf,
+    pub repo_root: PathBuf,
     pub redis_url: String,
     pub allow_unsafe_agents: bool,
+    pub submodules: SubmoduleMap,
+    /// GitHub remote config: None = no remote, Some = auto-add remote on create-submodule.
+    pub github_remote: Option<GitHubRemote>,
+}
+
+/// GitHub (or compatible) remote configuration for new submodules.
+#[derive(Debug, Clone)]
+pub struct GitHubRemote {
+    /// The remote name (e.g., "github", "origin")
+    pub remote_name: String,
+    /// Either a GitHub username (expanded to git@github.com:USER/REPO.git)
+    /// or a full URL template with {NAME} placeholder.
+    pub url_or_account: String,
+}
+
+impl GitHubRemote {
+    /// Build the remote URL for a given submodule name.
+    pub fn url_for(&self, submodule_name: &str) -> String {
+        if self.url_or_account.contains("://") || self.url_or_account.contains('@') {
+            // It's a URL template — substitute {NAME}
+            self.url_or_account.replace("{NAME}", submodule_name)
+        } else {
+            // It's a GitHub account name
+            format!("git@github.com:{}/{submodule_name}.git", self.url_or_account)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +210,12 @@ struct RawConfig {
 struct RawOptions {
     default_agent: Option<String>,
     default_planner: Option<String>,
+    repos_path: Option<String>,
+    submodules_path: Option<String>,
+    /// GitHub account name or full URL template (e.g., "tmzt" or "git@gitlab.com:{NAME}.git")
+    github_account: Option<String>,
+    /// Remote name for the GitHub remote (default: "github")
+    github_remote_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +262,10 @@ impl RefineryConfig {
         let raw_opts = raw.options.unwrap_or(RawOptions {
             default_agent: None,
             default_planner: None,
+            repos_path: None,
+            submodules_path: None,
+            github_account: None,
+            github_remote_name: None,
         });
 
         let planning_path = std::env::var("PLANNING_PATH")
@@ -237,6 +278,13 @@ impl RefineryConfig {
         let allow_unsafe_agents = std::env::var("ALLOW_UNSAFE_AGENTS")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
+
+        // Discover parent repo root and first-level submodules
+        let repo_root = crate::git_ops::find_repo_root(&planning_path)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let submodules = crate::git_ops::discover_submodules(&repo_root)
+            .unwrap_or_default();
 
         let templates = raw
             .templates
@@ -259,13 +307,33 @@ impl RefineryConfig {
             })
             .collect();
 
+        let repos_path = raw_opts
+            .repos_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo_root.join("repos/submodules"));
+
+        let submodules_path = raw_opts
+            .submodules_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo_root.join("submodules"));
+
+        let github_remote = raw_opts.github_account.map(|acct| GitHubRemote {
+            remote_name: raw_opts.github_remote_name.unwrap_or_else(|| "github".to_string()),
+            url_or_account: acct,
+        });
+
         Ok(RefineryConfig {
             options: Options {
                 default_agent: raw_opts.default_agent,
                 default_planner: raw_opts.default_planner,
                 planning_path,
+                repos_path,
+                submodules_path,
+                repo_root,
                 redis_url,
                 allow_unsafe_agents,
+                submodules,
+                github_remote,
             },
             templates,
         })

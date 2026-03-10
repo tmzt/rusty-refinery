@@ -52,6 +52,9 @@ impl Reaper {
             cmd.env(key, crate::config::interpolate_env(val, &ctx));
         }
 
+        // Prevent the post-commit hook from re-syncing PRDs committed by this agent
+        cmd.env(crate::hooks::SKIP_HOOK_ENV, "1");
+
         let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
 

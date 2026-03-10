@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
 
-pub const DEFAULT_SOCKET_PATH: &str = "/tmp/rusty-refinery.sock";
+pub const DEFAULT_SOCKET_PATH: &str = "/tmp/crk.sock";
 
 /// Run as a daemon listening on a Unix domain socket.
 /// For each connection, calls the provided async factory to serve it.
