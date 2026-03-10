@@ -4,10 +4,25 @@ An MCP server that orchestrates PRD-to-agent lifecycle: hashes PRD files, dedupl
 
 The binary is called `crk`.
 
-## Building
+## Installation
 
+From git:
+
+```bash
+cargo install --git https://github.com/tmzt/rusty-refinery crk
 ```
+
+From source:
+
+```bash
+make install        # installs to ~/.local/bin/crk
+```
+
+Or build manually:
+
+```bash
 cargo build --release
+install -m 755 target/release/crk ~/.local/bin/crk
 ```
 
 ## Running
